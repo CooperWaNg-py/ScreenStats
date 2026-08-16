@@ -123,19 +123,24 @@ def greeting_for(now: datetime, w: weathermod.Weather | None) -> str:
     return "Good Evening"
 
 
-def clock_text(now: datetime, cfg: cfgmod.Config, quantum: int) -> str:
-    """HH:MM floored to the paint interval.
+def clock_text(now: datetime, cfg: cfgmod.Config) -> str:
+    """The exact HH:MM at paint time.
 
-    Floored, not rounded: showing a time the panel has not reached yet reads as a
-    fast clock, whereas a floored time is simply "as of".
+    NOT quantised to the refresh interval. An earlier version floored to 5-minute
+    buckets on the theory that a tidy time reads better, but that is strictly worse:
+    a paint at 20:03 displayed 20:00 and held it until 20:08, so the panel could be
+    ~8 minutes behind. The paint interval already bounds staleness at
+    `refresh_seconds`; flooring only adds up to another `refresh_seconds` on top,
+    and the buckets do not align to the wall clock anyway because paints are spaced
+    from process start rather than from :00.
+
+    Truncating to the minute (never rounding up) still means the panel never shows
+    a time it has not reached.
     """
-    step = max(60, quantum)
-    minutes = (now.hour * 60 + now.minute) // (step // 60) * (step // 60)
-    hh, mm = divmod(minutes, 60)
     if cfg.clock_24h:
-        return f"{hh:02d}:{mm:02d}"
-    h12 = hh % 12 or 12
-    return f"{h12}:{mm:02d}{'am' if hh < 12 else 'pm'}"
+        return f"{now.hour:02d}:{now.minute:02d}"
+    h12 = now.hour % 12 or 12
+    return f"{h12}:{now.minute:02d}{'am' if now.hour < 12 else 'pm'}"
 
 
 def build_snapshot(
@@ -151,7 +156,7 @@ def build_snapshot(
 
     city = cfg.location.label or (g.city if g else "") or "Unknown"
     return layout.Snapshot(
-        clock=clock_text(now, cfg, cfg.refresh_seconds),
+        clock=clock_text(now, cfg),
         date=now.strftime("%a %d %b"),
         greeting=greeting_for(now, w),
         cpu=m.cpu,
