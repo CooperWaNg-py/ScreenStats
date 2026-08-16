@@ -1,0 +1,3 @@
+advisors:
+  - name: default
+    model: kimi-code/k3

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ScreenStats">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3440"/>
+      <stop offset="1" stop-color="#151a21"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- e-paper panel: 2.13" is 250x122, so the plate keeps that ~2.05:1 ratio -->
+  <g transform="translate(66 150)">
+    <rect x="0" y="0" width="380" height="186" rx="14" fill="#f4f4ef"/>
+    <rect x="0" y="0" width="380" height="186" rx="14" fill="none" stroke="#0d1117" stroke-width="8"/>
+
+    <!-- clock, the hero element, mirroring the real layout -->
+    <text x="26" y="86" font-family="DejaVu Sans Mono, ui-monospace, monospace"
+          font-size="66" font-weight="700" fill="#0d1117" letter-spacing="-2">14:35</text>
+
+    <!-- divider between clock block and stat gauges -->
+    <line x1="228" y1="16" x2="228" y2="100" stroke="#0d1117" stroke-width="5"/>
+
+    <!-- three usage gauges: CPU / RAM / DSK -->
+    <g fill="none" stroke="#0d1117" stroke-width="5">
+      <rect x="248" y="22" width="110" height="18" rx="3"/>
+      <rect x="248" y="52" width="110" height="18" rx="3"/>
+      <rect x="248" y="82" width="110" height="18" rx="3"/>
+    </g>
+    <g fill="#0d1117">
+      <rect x="253" y="27" width="42"  height="8" rx="2"/>
+      <rect x="253" y="57" width="76"  height="8" rx="2"/>
+      <rect x="253" y="87" width="30"  height="8" rx="2"/>
+    </g>
+
+    <!-- horizontal rule, then greeting + temperature -->
+    <line x1="14" y1="116" x2="366" y2="116" stroke="#0d1117" stroke-width="5"/>
+    <text x="26" y="158" font-family="DejaVu Sans, system-ui, sans-serif"
+          font-size="34" font-weight="700" fill="#0d1117">Evening</text>
+    <text x="366" y="158" text-anchor="end" font-family="DejaVu Sans, system-ui, sans-serif"
+          font-size="38" font-weight="700" fill="#0d1117">11&#176;</text>
+  </g>
+
+  <!-- FPC ribbon tail, the giveaway that this is an e-paper module -->
+  <rect x="212" y="336" width="88" height="26" rx="6" fill="#c9a227"/>
+</svg>

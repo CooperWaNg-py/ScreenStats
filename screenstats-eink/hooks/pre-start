@@ -1,0 +1,215 @@
+#!/bin/sh
+# ScreenStats pre-start hook. Runs on the HOST as root, before `docker compose up`.
+#
+# Purpose: report whether the SPI bus that the e-Paper HAT needs is available.
+# umbrelOS ships no `dtparam=spi=on`, so /dev/spidev0.0 does not exist on a stock
+# Raspberry Pi image and the panel cannot be driven until the operator adds it to
+# config.txt on the boot partition and reboots.
+#
+# THIS HOOK IS READ-ONLY BY DEFAULT, DELIBERATELY.
+#   * The Pi image uses A/B boot slots (boot-a / boot-b). Editing the live slot
+#     from an app hook risks leaving the device unbootable.
+#   * umbreld invokes hooks as `"${hook}" || true`, so a failure — including a
+#     half-written config.txt or a stale mount — is swallowed and invisible.
+# Therefore the write path is opt-in only: it runs solely when the operator has
+# created the marker file  ${APP_DATA_DIR}/data/enable-spi-autofix .
+#
+# Outcome is always published to ${APP_DATA_DIR}/data/state/host-spi.json, which
+# the web UI renders. The hook is never the source of truth — the live device
+# probe in the container is.
+#
+# Every step is idempotent: it may run on every single app start.
+
+set -eu
+
+# umbrelOS exports APP_DATA_DIR; derive it from this script's location otherwise
+# (hooks/ lives directly under the app-data root).
+if [ -z "${APP_DATA_DIR:-}" ]; then
+    APP_DATA_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+fi
+
+DATA_DIR="${APP_DATA_DIR}/data"
+STATE_DIR="${DATA_DIR}/state"
+MARKER="${DATA_DIR}/enable-spi-autofix"
+OUT="${STATE_DIR}/host-spi.json"
+AUTOBOOT="/run/rugix/mounts/config/autoboot.txt"
+FALLBACK_CONFIG="/boot/firmware/config.txt"
+SPI_NODE="/dev/spidev0.0"
+SPI_LINE="dtparam=spi=on"
+
+mkdir -p "${STATE_DIR}" "${DATA_DIR}/cache"
+
+MNT=""
+MOUNTED=0
+
+cleanup() {
+    if [ "${MOUNTED}" -eq 1 ] && [ -n "${MNT}" ]; then
+        umount "${MNT}" 2>/dev/null || umount -l "${MNT}" 2>/dev/null || true
+        MOUNTED=0
+    fi
+    if [ -n "${MNT}" ] && [ -d "${MNT}" ]; then
+        rmdir "${MNT}" 2>/dev/null || true
+    fi
+}
+# Guarded so a failure anywhere below can never leave the boot partition mounted.
+trap cleanup EXIT HUP INT TERM
+
+DETAIL=""
+add_detail() {
+    if [ -z "${DETAIL}" ]; then DETAIL="$1"; else DETAIL="${DETAIL}; $1"; fi
+}
+
+# ---------------------------------------------------------------- probe: kernel
+
+if [ -e "${SPI_NODE}" ]; then
+    SPI_PRESENT=true
+else
+    SPI_PRESENT=false
+fi
+
+GPIOCHIPS=""
+for chip in /dev/gpiochip*; do
+    [ -e "${chip}" ] || continue
+    if [ -z "${GPIOCHIPS}" ]; then
+        GPIOCHIPS="\"${chip}\""
+    else
+        GPIOCHIPS="${GPIOCHIPS},\"${chip}\""
+    fi
+done
+
+if [ -f "${MARKER}" ]; then
+    AUTOFIX=true
+else
+    AUTOFIX=false
+fi
+
+# ------------------------------------------------------- probe: active boot slot
+# rugix records the slot it booted in autoboot.txt; only the [all] section counts.
+#   [all]
+#   tryboot_a_b=0
+#   boot_partition=2
+
+BOOT_PART=""
+BOOT_DEV="null"
+if [ -r "${AUTOBOOT}" ]; then
+    BOOT_PART=$(awk '
+        /^[[:space:]]*\[/ { sect=$0; gsub(/[][ \t\r]/, "", sect); next }
+        sect == "all" && /^[[:space:]]*boot_partition[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, "")
+            gsub(/[ \t\r]/, "", $0)
+            print
+            exit
+        }
+    ' "${AUTOBOOT}" 2>/dev/null || true)
+fi
+
+case "${BOOT_PART}" in
+    ''|*[!0-9]*)
+        BOOT_PART=""
+        ;;
+    *)
+        BOOT_DEV="/dev/mmcblk0p${BOOT_PART}"
+        ;;
+esac
+
+# ------------------------------------------- probe: does config.txt enable SPI?
+# CONFIG_TXT is set only when a config.txt was actually located and read.
+
+HAS_SPI="null"
+CONFIG_TXT=""
+
+if [ "${BOOT_DEV}" != "null" ] && [ -b "${BOOT_DEV}" ]; then
+    MNT=$(mktemp -d /tmp/screenstats-boot.XXXXXX)
+    if mount -t vfat -o ro "${BOOT_DEV}" "${MNT}" 2>/dev/null \
+        || mount -o ro "${BOOT_DEV}" "${MNT}" 2>/dev/null; then
+        MOUNTED=1
+        if [ -f "${MNT}/config.txt" ]; then
+            CONFIG_TXT="${MNT}/config.txt"
+            add_detail "read config.txt from active boot slot ${BOOT_DEV} (mounted read-only)"
+        else
+            add_detail "mounted ${BOOT_DEV} read-only but it has no config.txt"
+        fi
+    else
+        add_detail "could not mount active boot slot ${BOOT_DEV} read-only"
+    fi
+elif [ "${BOOT_DEV}" != "null" ]; then
+    add_detail "autoboot.txt names partition ${BOOT_PART} but ${BOOT_DEV} is not a block device"
+fi
+
+if [ -z "${CONFIG_TXT}" ] && [ -f "${FALLBACK_CONFIG}" ]; then
+    CONFIG_TXT="${FALLBACK_CONFIG}"
+    add_detail "using already-mounted ${FALLBACK_CONFIG}"
+fi
+
+if [ -z "${CONFIG_TXT}" ]; then
+    add_detail "no config.txt located: ${AUTOBOOT} and ${FALLBACK_CONFIG} are both unavailable, so SPI cannot be inspected from the host"
+else
+    if grep -Eq "^[[:space:]]*${SPI_LINE}[[:space:]]*$" "${CONFIG_TXT}"; then
+        HAS_SPI=true
+    else
+        HAS_SPI=false
+    fi
+fi
+
+# ------------------------------------------------------ opt-in write path only
+
+REBOOT_REQUIRED=false
+
+if [ "${AUTOFIX}" = true ] && [ "${SPI_PRESENT}" = false ] && [ -n "${CONFIG_TXT}" ]; then
+    if [ "${HAS_SPI}" = true ]; then
+        add_detail "autofix enabled, ${SPI_LINE} already present in config.txt, reboot pending"
+        REBOOT_REQUIRED=true
+    else
+        WRITABLE=1
+        if [ "${MOUNTED}" -eq 1 ]; then
+            if ! mount -o remount,rw "${MNT}" 2>/dev/null; then
+                WRITABLE=0
+                add_detail "autofix enabled but ${BOOT_DEV} could not be remounted read-write"
+            fi
+        fi
+        if [ "${WRITABLE}" -eq 1 ]; then
+            if [ ! -f "${CONFIG_TXT}.screenstats-bak" ]; then
+                cp -p "${CONFIG_TXT}" "${CONFIG_TXT}.screenstats-bak"
+            fi
+            printf '\n# added by screenstats-eink pre-start hook\n%s\n' "${SPI_LINE}" \
+                >> "${CONFIG_TXT}"
+            sync
+            HAS_SPI=true
+            REBOOT_REQUIRED=true
+            add_detail "autofix appended ${SPI_LINE} to config.txt (backup: config.txt.screenstats-bak); REBOOT REQUIRED"
+            if [ "${MOUNTED}" -eq 1 ]; then
+                mount -o remount,ro "${MNT}" 2>/dev/null || true
+            fi
+        fi
+    fi
+elif [ "${SPI_PRESENT}" = true ]; then
+    add_detail "SPI bus present at ${SPI_NODE}"
+elif [ "${AUTOFIX}" = false ]; then
+    add_detail "SPI bus absent and autofix is disabled (read-only mode); add ${SPI_LINE} to config.txt on the boot partition and reboot, or create ${MARKER} to let this hook do it"
+fi
+
+if [ "${HAS_SPI}" = true ] && [ "${SPI_PRESENT}" = false ]; then
+    REBOOT_REQUIRED=true
+    add_detail "config.txt enables SPI but the kernel has not exposed ${SPI_NODE}: reboot required"
+fi
+
+cleanup
+trap - EXIT HUP INT TERM
+
+# --------------------------------------------------------------------- publish
+
+TMP="${OUT}.tmp.$$"
+cat > "${TMP}" <<EOF
+{"checked_at":$(date +%s),
+ "spi_present":${SPI_PRESENT},
+ "gpiochips":[${GPIOCHIPS}],
+ "active_boot_partition":$( [ "${BOOT_DEV}" = "null" ] && printf 'null' || printf '"%s"' "${BOOT_DEV}" ),
+ "config_txt_has_spi":${HAS_SPI},
+ "autofix_enabled":${AUTOFIX},
+ "reboot_required":${REBOOT_REQUIRED},
+ "detail":"${DETAIL}"}
+EOF
+chmod 0644 "${TMP}"
+mv -f "${TMP}" "${OUT}"
+
+exit 0

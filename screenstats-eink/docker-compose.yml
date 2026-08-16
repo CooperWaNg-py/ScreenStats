@@ -1,0 +1,82 @@
+version: "3.7"
+
+# One image, two entrypoints, split strictly on privilege:
+#   server   - uid 1000, owns the web UI / config API / widget endpoint, no hardware
+#   renderer - root, owns the panel and all data collection, opens no socket
+#
+# The image is published as a multi-arch manifest list (linux/amd64 + linux/arm64)
+# by .github/workflows/publish-image.yml. Pin the INDEX digest here -- not a
+# per-platform digest, or one architecture will fail to pull:
+#   docker buildx imagetools inspect ghcr.io/cooperwang-py/screenstats:0.1.0
+
+services:
+  # Required stub: umbrelOS only merges its app_proxy fragment if the service is
+  # declared here, and it reads APP_HOST/APP_PORT with readFromEnvOrTerminate —
+  # a missing value makes the proxy exit immediately. The host is the injected
+  # container name <app-id>_<service>_1.
+  app_proxy:
+    environment:
+      APP_HOST: screenstats-eink_server_1
+      APP_PORT: 8080
+
+  server:
+    image: ghcr.io/cooperwang-py/screenstats:0.1.0
+    user: "1000:1000"
+    init: true
+    restart: on-failure
+    command: ["python3", "-m", "screenstats.server"]
+    environment:
+      SCREENSTATS_DATA: /data
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+
+  renderer:
+    image: ghcr.io/cooperwang-py/screenstats:0.1.0
+    # No `user:` — runs as root. The host device nodes are 0660 root:spi /
+    # root:gpio and neither group name exists inside the image, so root's
+    # CAP_DAC_OVERRIDE is what makes them accessible. `group_add` is not an
+    # option: the groups do not exist in the image.
+    init: true
+    restart: on-failure
+    command: ["python3", "-m", "screenstats.renderer"]
+    # SPI + GPIO chardev access without full privilege.
+    #
+    # Why `device_cgroup_rules` and not `privileged: true`: this grants the same
+    # device access but keeps seccomp and AppArmor applied and leaves /proc and
+    # /sys masked, all of which full privilege drops.
+    #
+    # Why `/dev` is bind-mounted instead of listed under `devices:`: a `devices:`
+    # entry whose host path is absent prevents the container from being created
+    # at all, and /dev/spidev0.0 does not exist until the user enables SPI on the
+    # host and reboots. With the bind mount the container still starts, and the
+    # status page can explain the missing bus instead of the failure being buried
+    # in `docker compose` output.
+    #
+    # The wildcard is required because spidev and gpiochip char majors are
+    # dynamically allocated — there is no stable major:minor to name.
+    device_cgroup_rules:
+      - "c *:* rwm"
+    # Fallback if the compose version in umbrelOS rejects device_cgroup_rules
+    # (precedent: octoprint, home-assistant). Drops seccomp/AppArmor, so only
+    # use it if the rule above is not accepted:
+    # privileged: true
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+      - /dev:/dev
+      # Read-only devicetree, mounted OUTSIDE /sys: Docker mounts a fresh sysfs over
+      # /sys, which silently swallows bind mounts under it (verified). This lets the
+      # renderer verify /dev/gpiochip0 really is the 40-pin header controller
+      # (brcm,bcm2711-gpio) and not a firmware GPIO expander; otherwise the check
+      # degrades to silent-unknown and a mis-enumerated chip would go unwarned.
+      - /proc/device-tree:/host-devicetree:ro
+    environment:
+      SCREENSTATS_DATA: /data
+      SCREENSTATS_DRIVER: epd
+      # Pi 4B is board type 0x11, so gpiozero's LGPIOFactory deterministically
+      # opens /dev/gpiochip0. Pinned explicitly so it never probes RPi.GPIO.
+      GPIOZERO_PIN_FACTORY: lgpio
+      # The app-data filesystem IS the figure worth reporting — verified
+      # on-device that /data is the right volume, so no /:/host:ro mount.
+      SCREENSTATS_DISK_PATH: /data
+      # Where the read-only devicetree bind mount landed (see volumes above).
+      SCREENSTATS_DEVICETREE: /host-devicetree

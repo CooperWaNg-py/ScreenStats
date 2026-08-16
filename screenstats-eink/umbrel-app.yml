@@ -1,0 +1,79 @@
+manifestVersion: 1
+# `id` MUST equal this directory's name AND start with the store id
+# (`screenstats`) — umbrelOS silently drops apps that fail
+# `app.id.startsWith(store.id)`.
+id: screenstats-eink
+category: automation
+name: ScreenStats
+version: "0.1.0"
+tagline: Clock, host stats and weather on a 2.13" e-Paper HAT
+description: >-
+  REQUIRES A ONE-TIME HOST CHANGE. umbrelOS does not enable the SPI bus, so
+  /dev/spidev0.0 does not exist on a stock Raspberry Pi image and no container
+  can drive the panel. Before this app can paint anything you must add
+  `dtparam=spi=on` to `config.txt` on the boot partition and reboot the Pi. The
+  app's status page shows the exact steps and reports whether SPI is present;
+  everything except the panel itself works without it.
+
+
+  ScreenStats drives a Waveshare 2.13" e-Paper HAT V4 (250x122, 1-bit) attached
+  to the Raspberry Pi that runs umbrelOS. The frame shows the time, a
+  time-of-day greeting, host CPU / RAM / disk usage, and current weather for the
+  location resolved from your public IP (overridable with manual coordinates).
+
+
+  The clock updates at 5-minute granularity, not every second. Waveshare
+  specifies a minimum refresh interval of 180 s, mandates a sleep after every
+  refresh, and limits partial refreshes to 5 in a row before a full refresh.
+  Violating those limits permanently damages the panel, so the refresh floor is
+  enforced in code and cannot be configured below 180 s.
+
+
+  Weather data by Open-Meteo.com (CC BY 4.0). Geolocation by ip-api.com with
+  ipwho.is as a fallback. No API keys, no accounts.
+developer: CooperWaNg-py
+website: https://github.com/CooperWaNg-py/ScreenStats
+dependencies: []
+repo: https://github.com/CooperWaNg-py/ScreenStats
+support: https://github.com/CooperWaNg-py/ScreenStats/issues
+port: 4180
+# Community stores use `icon` and `gallery` verbatim; the default fallback
+# (getumbrel.github.io/umbrel-apps-gallery/<id>/...) 404s for custom repos, so
+# both MUST be absolute URLs.
+# Assets live in this repo under assets/; raw.githubusercontent serves them.
+icon: https://raw.githubusercontent.com/CooperWaNg-py/ScreenStats/main/assets/icon.svg
+gallery:
+  - https://raw.githubusercontent.com/CooperWaNg-py/ScreenStats/main/assets/gallery/1.jpg
+  - https://raw.githubusercontent.com/CooperWaNg-py/ScreenStats/main/assets/gallery/2.jpg
+  - https://raw.githubusercontent.com/CooperWaNg-py/ScreenStats/main/assets/gallery/3.jpg
+path: ""
+submitter: CooperWaNg-py
+submission: https://github.com/CooperWaNg-py/ScreenStats
+releaseNotes: >-
+  First release. Requires SPI to be enabled on the host (see the description and
+  the app's status page).
+widgets:
+  # `four-stats` requires EXACTLY 4 items. `refresh` must be a non-empty string:
+  # umbreld calls ms(widgetData.refresh) unconditionally and throws on
+  # undefined, which fails the whole widget query. `endpoint` is
+  # <service>:<port>/<path> with NO scheme — umbreld fetches it server-side by
+  # container IP, bypassing app_proxy.
+  - id: "status"
+    type: "four-stats"
+    refresh: "30s"
+    endpoint: "server:8080/widgets/status"
+    link: ""
+    example:
+      type: "four-stats"
+      link: ""
+      refresh: "30s"
+      items:
+        - title: "CPU"
+          text: "42%"
+        - title: "RAM"
+          text: "71%"
+        - title: "Disk"
+          text: "31%"
+        - title: "Weather"
+          text: "11°"
+          subtext: "Part cloudy"

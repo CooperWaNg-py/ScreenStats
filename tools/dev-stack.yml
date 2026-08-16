@@ -1,0 +1,67 @@
+# Standalone compose stack for running ScreenStats on a Raspberry Pi OUTSIDE umbrelOS.
+#
+# This is NOT the Umbrel package -- screenstats-eink/docker-compose.yml is. Use this
+# for hardware bring-up and day-to-day running before the image is published and the
+# community app store is wired up. Differences from the real package:
+#
+#   * no `app_proxy` service (umbrelOS injects that image; compose cannot resolve it
+#     here), so `server` publishes its port directly and has NO authentication
+#   * builds the image locally instead of pulling a digest-pinned multi-arch image
+#   * ${APP_DATA_DIR} is replaced by a plain ./appdata bind mount
+#
+# Device access, the refresh policy, and the renderer/server split are identical to
+# the packaged app, so a panel that works here works there.
+#
+# Usage, from the repo root on the Pi:
+#     mkdir -p appdata/cache appdata/state
+#     docker compose -f tools/dev-stack.yml up -d --build
+#     docker compose -f tools/dev-stack.yml logs -f renderer
+#     # web UI: http://<pi>:4180/
+
+name: screenstats-dev
+
+services:
+  server:
+    build: ../image
+    image: screenstats:dev
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    command: ["python3", "-m", "screenstats.server"]
+    ports:
+      # Published directly because there is no app_proxy here. On umbrelOS the
+      # proxy owns the host port and adds authentication; this is LAN-open.
+      - "4180:8080"
+    environment:
+      SCREENSTATS_DATA: /data
+    volumes:
+      - ../appdata:/data
+
+  renderer:
+    build: ../image
+    image: screenstats:dev
+    # Root: /dev/spidev0.0 and /dev/gpiochip0 are 0600 root:root on umbrelOS,
+    # which ships none of the Raspberry Pi OS udev rules, so no gpio/spi group
+    # exists to join.
+    init: true
+    restart: unless-stopped
+    command: ["python3", "-m", "screenstats.renderer"]
+    # Same rationale as the packaged app: grants SPI/GPIO chardev access while
+    # keeping seccomp and AppArmor applied, and starts even when /dev/spidev0.0
+    # is absent. Wildcard because spidev (153) and gpiochip (254) majors are
+    # dynamically allocated.
+    device_cgroup_rules:
+      - "c *:* rwm"
+    volumes:
+      - ../appdata:/data
+      - /dev:/dev
+      # Mounted outside /sys on purpose: Docker mounts a fresh sysfs over /sys and
+      # silently swallows bind mounts beneath it, which would leave the gpiochip
+      # identity check unable to run.
+      - /proc/device-tree:/host-devicetree:ro
+    environment:
+      SCREENSTATS_DATA: /data
+      SCREENSTATS_DRIVER: epd
+      SCREENSTATS_DISK_PATH: /data
+      SCREENSTATS_DEVICETREE: /host-devicetree
+      GPIOZERO_PIN_FACTORY: lgpio

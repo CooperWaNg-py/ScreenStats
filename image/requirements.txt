@@ -1,0 +1,25 @@
+# Runtime dependencies. Deliberately minimal: everything else is stdlib
+# (urllib.request for HTTP, os.statvfs / /proc for metrics, http.server for the UI).
+#
+# spidev and lgpio are C extensions with no wheels for macOS/Windows, so they
+# build from source off-Linux. That is expected and irrelevant here: the image is
+# only ever built for linux/amd64 and linux/arm64, where manylinux wheels exist
+# (lgpio) or the source build succeeds against the slim image's toolchain-free
+# ABI headers (spidev is a single C file using only the kernel uapi headers).
+
+# Frame composition: 1-bit images, ImageDraw, ImageFont. 10.0 is the first
+# release with the Pillow 10 API used by the layout module (textbbox, no
+# deprecated textsize) and it drops the ImageDraw.textsize removal warning.
+Pillow>=10.0.0
+
+# SPI userspace access for the panel; imported by waveshare_epd.epdconfig.
+# 3.6 is the first release with the py3.12-compatible build.
+spidev>=3.6
+
+# GPIO chardev access (RST/DC/BUSY/PWR pins); imported by epdconfig.
+# 2.0 is the first release with the LGPIOFactory used on Pi 4B/5.
+gpiozero>=2.0
+
+# gpiozero's pin backend, selected via GPIOZERO_PIN_FACTORY=lgpio. Talks to
+# /dev/gpiochip0 directly - no RPi.GPIO, which is broken on current kernels.
+lgpio>=0.2.2.0

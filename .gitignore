@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+preview*.png
+.venv/
+*.tmp.*
+
+# Local bring-up artefacts
+appdata/
+assets/gallery/*.tmp.*
