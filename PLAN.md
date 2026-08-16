@@ -867,8 +867,25 @@ What could not be verified here, and how it is guarded:
 2. **Which volume should the disk gauge report?** Pi 4B is microSD-boot, but app
    data may sit on an attached USB SSD. `lsblk` output from §6 command 1 answers
    it; it sets `SCREENSTATS_DISK_PATH`.
-3. **Registry namespace + GitHub org/repo** for the multi-arch image, the store
-   URL, and the absolute `icon`/`gallery` URLs (§8).
+3. ~~Registry namespace + GitHub org/repo~~ **Resolved and published.**
+   Repo `github.com/CooperWaNg-py/ScreenStats`; image
+   `ghcr.io/cooperwang-py/screenstats:0.1.0` (GHCR refuses uppercase, hence the
+   lowercased namespace), built multi-arch by
+   `.github/workflows/publish-image.yml` and pinned to the OCI **index** digest
+   `sha256:9c77b544…22cfb`. Verified GHCR issues an anonymous pull token, so
+   umbrelOS needs no registry credentials, and that the index carries both
+   `linux/amd64` and `linux/arm64`. `icon`/`gallery` all return HTTP 200 from
+   raw.githubusercontent.
+
+4. **The umbrelOS app install itself is still unperformed.** Adding a community
+   app store requires the authenticated umbrelOS UI, which cannot be driven from
+   here. Until then `app_proxy` authentication and the dashboard widget are
+   unexercised in situ, even though both are verified in isolation.
+
+5. **Host grants do not persist.** umbrelOS resets everything outside `/data` at
+   boot (`/etc/rugix/state/data.toml`), so `usermod -aG docker` and
+   `/etc/sudoers.d/*` are reverted. `tools/dev-stack.yml` therefore cannot be a
+   deployment; the packaged app is the only durable path.
 
 ### Recommended next step
 
