@@ -5,7 +5,7 @@ manifestVersion: 1
 id: screenstats-eink
 category: automation
 name: ScreenStats
-version: "0.1.0"
+version: "0.1.1"
 tagline: Clock, host stats and weather on a 2.13" e-Paper HAT
 description: >-
   REQUIRES A ONE-TIME HOST CHANGE. umbrelOS does not enable the SPI bus, so
@@ -50,8 +50,15 @@ path: ""
 submitter: CooperWaNg-py
 submission: https://github.com/CooperWaNg-py/ScreenStats
 releaseNotes: >-
-  First release. Requires SPI to be enabled on the host (see the description and
-  the app's status page).
+  Fixes the CPU gauge always reading 0% on the panel.
+
+  The CPU figure is a delta between two /proc/stat reads, and the panel paints on
+  the renderer's first loop pass -- before any delta existed. Because the panel
+  then holds its image for five minutes, that placeholder zero was what you
+  actually saw. The baseline is now established when the collector is created,
+  plus a one second warm-up before the first paint, so the first frame carries a
+  real figure. An unreadable /proc/stat or a sub-jiffy sample now reports the last
+  known value instead of a misleading 0%.
 widgets:
   # `four-stats` requires EXACTLY 4 items. `refresh` must be a non-empty string:
   # umbreld calls ms(widgetData.refresh) unconditionally and throws on

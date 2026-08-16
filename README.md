@@ -99,6 +99,37 @@ Two consequences:
 Also prefer `http://umbrel.local` over an IP: umbrelOS takes its address from DHCP
 and it does change.
 
+### If `umbrel.local` does not resolve
+
+Check what avahi is actually advertising:
+
+```bash
+pgrep -a avahi-daemon      # -> "avahi-daemon: running [umbrel-3.local]"
+```
+
+A name like `umbrel-3.local` means avahi hit a name conflict and renamed itself.
+The usual cause on a Pi is being connected to **Ethernet and Wi-Fi at the same
+time on the same subnet**:
+
+```bash
+ip -4 addr show scope global | grep -E "^[0-9]+:|inet "
+#   end0  ... inet 192.168.0.39/24
+#   wlan0 ... inet 192.168.0.34/24     <- two addresses, one LAN
+```
+
+Avahi announces `umbrel.local` on one interface, receives its own announcement on
+the other, calls it a conflict, and appends a counter. Fixes, best first:
+
+1. **Use one interface.** Turn off Wi-Fi when Ethernet is plugged in (or unplug
+   Ethernet). Restart avahi, or reboot, and it reclaims `umbrel.local`.
+2. Use the advertised name (`umbrel-3.local`) or the IP in the meantime.
+3. Pinning `allow-interfaces=` in `/etc/avahi/avahi-daemon.conf` works but does
+   **not** survive a reboot, because umbrelOS resets everything outside `/data`.
+
+The counter increments on each conflict, so the name is not stable -- fix the
+dual-homing rather than hardcoding `umbrel-3.local` anywhere.
+
+
 ### An OTA update can revert it
 
 umbrelOS updates install a whole new boot slot and switch to it; only `/data` is

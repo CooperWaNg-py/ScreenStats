@@ -340,6 +340,11 @@ def main() -> int:
     driver = os.environ.get("SCREENSTATS_DRIVER", "epd")
     disk_path = os.environ.get("SCREENSTATS_DISK_PATH", str(data))
     collector = metricsmod.MetricsCollector(disk_path)
+    # The panel paints on the first loop iteration and then not again for
+    # `refresh_seconds`. Without a warm-up the first frame reported CPU 0% and
+    # that stale zero sat on the display for five minutes -- the first thing a
+    # user ever sees. One second of baseline costs nothing at startup.
+    collector.warm_up(1.0)
 
     # Fonts come from the image (fonts-dejavu-core). If they are missing every
     # render would fail identically, so fail fast and loudly instead of looping.

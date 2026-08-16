@@ -120,13 +120,43 @@ def _read_disk(path: str) -> tuple[int, int]:
 
 
 class MetricsCollector:
-    """Stateful sampler. CPU needs two /proc/stat reads, so the previous
-    totals live here and the first `sample()` reports cpu=0.0."""
+    """Stateful sampler.
+
+    CPU is a delta over two /proc/stat reads, so the previous totals live here.
+    The baseline is established in `__init__` rather than on the first `sample()`,
+    because the panel paints on the renderer's first loop iteration: with a
+    None baseline that very first frame reported CPU 0% and, since the panel only
+    repaints every 5 minutes, the wrong figure stayed on screen. Priming here
+    means no caller ever sees a synthetic zero.
+
+    Callers that want the first reading averaged over a known window should still
+    call `warm_up()`; see its docstring.
+    """
 
     def __init__(self, disk_path: str = DEFAULT_DISK_PATH) -> None:
         self.disk_path = disk_path
         self._prev_total: int | None = None
         self._prev_idle: int | None = None
+        self._last_cpu = 0.0
+        # Establish the CPU baseline immediately.
+        totals = _read_cpu_totals()
+        if totals is not None:
+            self._prev_total, self._prev_idle = totals
+
+    def warm_up(self, seconds: float = 1.0) -> None:
+        """Re-baseline, then block for `seconds`.
+
+        A delta measured microseconds after construction is dominated by jiffy
+        quantisation. Calling this once at startup means the first real sample is
+        averaged over a known interval instead of being noise.
+        """
+        totals = _read_cpu_totals()
+        if totals is not None:
+            self._prev_total, self._prev_idle = totals
+        if seconds > 0:
+            import time as _time
+
+            _time.sleep(seconds)
 
     def sample(self) -> HostMetrics:
         cpu = self._sample_cpu()
@@ -143,21 +173,28 @@ class MetricsCollector:
         )
 
     def _sample_cpu(self) -> float:
+        """Fraction of jiffies spent non-idle since the previous read.
+
+        When the delta is unusable, report the LAST KNOWN value rather than 0.0.
+        A spurious zero is actively misleading on a 5-minute-refresh panel: it
+        looks like an idle machine and sticks around until the next repaint.
+        """
         totals = _read_cpu_totals()
         if totals is None:
             # Keep the previous baseline: /proc/stat being briefly unreadable
             # should not turn the next delta into a bogus spike.
-            return 0.0
+            return self._last_cpu
         total, idle = totals
         prev_total, prev_idle = self._prev_total, self._prev_idle
         self._prev_total, self._prev_idle = total, idle
         if prev_total is None or prev_idle is None:
-            return 0.0  # first sample: no delta yet
+            return self._last_cpu
         d_total = total - prev_total
         d_idle = idle - prev_idle
-        if d_total <= 0:  # counters reset, or sampled twice within a jiffy
-            return 0.0
-        return _clamp01(1.0 - (d_idle / d_total))
+        if d_total <= 0:  # counters reset, or sampled twice within one jiffy
+            return self._last_cpu
+        self._last_cpu = _clamp01(1.0 - (d_idle / d_total))
+        return self._last_cpu
 
 
 if __name__ == "__main__":
