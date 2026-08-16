@@ -20,7 +20,7 @@ services:
       APP_PORT: 8080
 
   server:
-    image: ghcr.io/cooperwang-py/screenstats:0.1.0@sha256:d400b0ef02f3cce3279db917249f5d96e02d0e87868d2f09b02f882dba265e4e
+    image: ghcr.io/cooperwang-py/screenstats:0.1.0@sha256:4cffdfc41cf355d1aab7c71fc41fd78a57ad825456acc33cc740d6f325091ee8
     user: "1000:1000"
     init: true
     restart: on-failure
@@ -31,7 +31,7 @@ services:
       - ${APP_DATA_DIR}/data:/data
 
   renderer:
-    image: ghcr.io/cooperwang-py/screenstats:0.1.0@sha256:d400b0ef02f3cce3279db917249f5d96e02d0e87868d2f09b02f882dba265e4e
+    image: ghcr.io/cooperwang-py/screenstats:0.1.0@sha256:4cffdfc41cf355d1aab7c71fc41fd78a57ad825456acc33cc740d6f325091ee8
     # No `user:` — runs as root. The host device nodes are 0660 root:spi /
     # root:gpio and neither group name exists inside the image, so root's
     # CAP_DAC_OVERRIDE is what makes them accessible. `group_add` is not an
