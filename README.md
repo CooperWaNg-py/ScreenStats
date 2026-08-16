@@ -187,6 +187,9 @@ python3 tools/layout_preview.py /tmp/p.png --case nominal    # nominal | evening
 The image must be a multi-arch manifest list; umbrelOS runs on `linux/amd64` and
 `linux/arm64` and the app linter rejects single-arch images:
 
+The image is published automatically by `.github/workflows/publish-image.yml` on
+every push that touches `image/`. Manual equivalent:
+
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t ghcr.io/cooperwang-py/screenstats:0.1.0 --push image/
