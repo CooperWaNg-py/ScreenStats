@@ -217,37 +217,59 @@ disagree.
 
 ### Panel refresh policy (`display/epd.py`)
 
-Per §0.1, a strict cycle. `tick % 6 == 0` → full refresh, otherwise partial:
+**Every refresh is a full refresh. Partial refresh is not used at all.**
 
 ```python
-# full:      init() -> Clear(0xFF) -> displayPartBaseImage(buf) -> sleep()
-# partial:   init() -> displayPartial(buf) -> sleep()          # max 5 in a row
+# every tick:  init() -> Clear(0xFF) -> display(buf) -> sleep()
 ```
 
-Non-obvious requirements, all from source:
+This is the vendor's own non-partial sequence from `epd_2in13_V4_test.py`.
 
-- `epd.sleep()` is mandatory after **every** tick (§0.1) and already calls
-  `epdconfig.module_exit()`, closing SPI.
+#### Why partial refresh had to go (found on hardware)
+
+The original design here was `tick % 6 == 0` → full, else
+`init() -> displayPartial(buf) -> sleep()`. It produced **visible ghosting on the
+real panel** — reported as a "01" and an "11" overlapping in the minutes digits.
+
+Two Waveshare requirements are in direct conflict:
+
+- Precautions #2 demands `sleep()` after every refresh. `epd.sleep()` issues deep
+  sleep (`0x10`/`0x01`) and `module_exit()` drops the `PWR` pin, so the controller
+  loses its RAM; the next `init()` then issues `SWRESET` (`0x12`), clearing it
+  again.
+- `displayPartial()` is a *differential* update: it writes only RAM bank `0x24`
+  and drives the difference against the old-image bank `0x26`.
+
+So after a sleep/init cycle a partial refresh diffs against undefined content and
+never drives out the previous image. Waveshare's own demo confirms the intended
+use — its partial loop calls `displayPartial()` repeatedly with **no `init()` and
+no `sleep()` in between**, inside one power-on session.
+
+At a ≥180 s cadence there is no such session, so partial refresh has no role here.
+Removing it also retires the 5-partial budget entirely. Cost: two full updates per
+tick (~4 s) and a visible flash, which is irrelevant every 5 minutes.
+
+`Clear(0xFF)` before `display()` is deliberate, not redundant — wiki FAQ: *"when
+the EPD wakes up, the screen must be cleared first, to avoid the afterimage
+phenomenon to the greatest extent."*
+
+#### Still true, and still load-bearing
+
+- `epd.sleep()` after **every** tick, including a failed one (`finally`).
 - After sleep, "the sent image data will be ignored, and it can be refreshed
   normally only after initializing again" → every tick re-`init()`s.
-- Switching partial → full needs a fresh `init()`: *"The full refresh
-  initialization function needs to be added when the e-Paper screen is switched
-  from partial refresh to full refresh."* (wiki FAQ)
-- `displayPartial()` re-issues `0x3C/0x01/0x11/SetWindow/SetCursor` itself and
-  pulses RST, so there is **no** `init(PART_UPDATE)` as there was on V2.
-- Always send the full 4000 B frame; "partial" is a waveform mode, not a
-  sub-rectangle transfer.
-- `getbuffer()` on a wrong-sized image logs a warning and returns a
-  **3750-byte** buffer (`int(122/8)*250`) instead of 4000 — a silent upstream
-  bug. Assert `len(buf) == 4000` before every push.
+- Always send the full 4000 B frame.
+- `getbuffer()` on a wrong-sized image logs a warning and returns a **3750-byte**
+  buffer (`int(122/8)*250`) instead of 4000 — a silent upstream bug. Assert
+  `len(buf) == 4000` before every push.
 
-`quiet_hours` (optional): skip painting overnight, but still force one full
-refresh on entry and never exceed 24 h without a refresh — the V4 spec warns
-that going 24 h unrefreshed causes *"Ghosting" or "Image Sticking"* (§16.5).
+`quiet_hours` (optional): skip painting overnight, but never exceed 24 h without a
+refresh — the V4 spec warns that going 24 h unrefreshed causes *"Ghosting" or
+"Image Sticking"* (§16.5).
 
 ### Display abstraction
 
-`display/base.py` defines a 3-method protocol (`push(image, full)`, `sleep()`,
+`display/base.py` defines a 3-method protocol (`push(image)`, `sleep()`,
 `close()`), selected by `SCREENSTATS_DRIVER`:
 
 | driver | use |

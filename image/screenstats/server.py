@@ -48,7 +48,6 @@ except ImportError:  # direct execution: python3 image/screenstats/server.py
 log = logging.getLogger("screenstats.server")
 
 MAX_BODY = 64 * 1024
-FULL_EVERY = 6  # renderer paints a full refresh on every 6th tick (PLAN 3)
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 
@@ -511,26 +510,17 @@ def render_panel_card(panel: dict[str, Any], published: bool) -> str:
     tick = _i(panel, "tick")
     error = panel.get("error")
     last_paint = _f(panel, "last_paint")
-    last_full = _f(panel, "last_full")
-    # Waveshare forbids more than 5 consecutive partial refreshes, so the
-    # renderer forces a full one on every 6th tick (and after 23 h idle). It
-    # stamps last_full == last_paint when the last paint was a full refresh,
-    # which is more truthful than assuming the plain tick cadence.
-    if last_full > 0.0 and last_full >= last_paint:
-        partials = 0
-    else:
-        partials = tick % FULL_EVERY if tick > 0 else 0
     rows = (
         _row("Driver", _esc(_s(panel, "driver") or "\u2014"))
         + _row("Last paint", _esc(ago(last_paint)))
         + _row("Next paint", _esc(upcoming(_f(panel, "next_paint"))))
         + _row("Tick", str(tick))
         + _row(
-            "Partials since full",
-            f"{partials} / {FULL_EVERY - 1}"
-            ' <span class="dim">(a full refresh is forced on every 6th tick)</span>',
+            "Refresh mode",
+            'full <span class="dim">(partial refresh is unusable here: the panel '
+            "sleeps between refreshes, which erases the reference image a partial "
+            "update diffs against, leaving the old frame ghosted)</span>",
         )
-        + _row("Last full refresh", _esc(ago(last_full)))
         + _row(
             "Error",
             f'<span class="err">{_esc(error)}</span>' if error else '<span class="dim">none</span>',

@@ -14,16 +14,14 @@ class NullDisplay:
 
     def __init__(self) -> None:
         self.pushes = 0
-        self.full_pushes = 0
         self.sleeps = 0
         self.closed = False
         self.last_push = 0.0
         self.last_size: tuple[int, int] | None = None
 
-    def push(self, img: Image.Image, full: bool) -> None:
+    def push(self, img: Image.Image) -> None:
+        # Every push is a full refresh now, so there is no separate counter.
         self.pushes += 1
-        if full:
-            self.full_pushes += 1
         self.last_size = img.size
         self.last_push = time.time()
 

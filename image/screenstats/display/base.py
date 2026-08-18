@@ -34,8 +34,17 @@ class Display(Protocol):
 
     name: str
 
-    def push(self, img: Image.Image, full: bool) -> None:
-        """Send one 250x122 mode-'1' frame. `full` selects a full refresh."""
+    def push(self, img: Image.Image) -> None:
+        """Send one 250x122 mode-'1' frame as a FULL refresh.
+
+        There is deliberately no partial-refresh option. Partial refresh diffs
+        against the controller's old-image RAM bank, and this app sleeps the panel
+        after every refresh (Waveshare Precautions #2), which powers the
+        controller down and loses that RAM. A partial refresh after a sleep/init
+        cycle therefore diffs against garbage and leaves the previous frame
+        ghosting through the new one. Waveshare's own demo only ever chains
+        partials within a single power-on session, with no sleep in between.
+        """
         ...
 
     def sleep(self) -> None:

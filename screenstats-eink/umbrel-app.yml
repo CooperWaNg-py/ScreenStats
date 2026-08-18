@@ -5,7 +5,7 @@ manifestVersion: 1
 id: screenstats-eink
 category: automation
 name: ScreenStats
-version: "0.1.2"
+version: "0.1.3"
 tagline: Clock, host stats and weather on a 2.13" e-Paper HAT
 description: >-
   REQUIRES A ONE-TIME HOST CHANGE. umbrelOS does not enable the SPI bus, so
@@ -50,7 +50,8 @@ path: ""
 submitter: CooperWaNg-py
 submission: https://github.com/CooperWaNg-py/ScreenStats
 releaseNotes: >-
-  Fixes the CPU gauge reading 0%, and makes the clock accurate to the minute.
+  Fixes ghosted, overlapping digits on the panel. Also fixes the CPU gauge
+  reading 0% and makes the clock accurate to the minute.
 
   The CPU figure is a delta between two /proc/stat reads, and the panel paints on
   the renderer's first loop pass -- before any delta existed. Because the panel
@@ -64,6 +65,13 @@ releaseNotes: >-
   display 20:00 and hold it until the next refresh, so the panel could read about
   eight minutes behind. It now shows the exact minute it painted, which bounds the
   error at the refresh interval.
+
+  Ghosting: refreshes alternated between full and partial updates. A partial update
+  is differential -- it drives the difference against the image the controller still
+  holds in RAM. But the panel is put into deep sleep after every refresh, which
+  powers the controller down and loses that RAM, so the partial update had no valid
+  reference and never drove out the old frame. Every refresh is now a full refresh,
+  which is the only correct choice when the panel sleeps between updates.
 widgets:
   # `four-stats` requires EXACTLY 4 items. `refresh` must be a non-empty string:
   # umbreld calls ms(widgetData.refresh) unconditionally and throws on

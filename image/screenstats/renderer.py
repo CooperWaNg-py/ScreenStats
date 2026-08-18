@@ -9,7 +9,7 @@ Two independent loops in one process:
       CPU delta needs.
 
   paint loop (config.refresh_seconds, floor 180 s)
-      build the frame, push it, sleep the panel, publish preview.png
+      build the frame, push it as a FULL refresh, sleep the panel, publish preview.png
 
 Why the paint loop is slow, and why that is not negotiable
 ----------------------------------------------------------
@@ -24,12 +24,18 @@ Waveshare's 2.13" manual, Precautions #1-#3:
     refreshing partially several times, you need to fully refresh EPD once.
     Otherwise, the display effect will be abnormal, which cannot be repaired!"
 
-and the V4 Specification p.9: "add a full-screen refresh after 5 consecutive
-operations".
+So: >=180 s between pushes, and sleep() after every push.
 
-So: >=180 s between pushes, sleep() after every push, and a full refresh every
-PARTIAL_BUDGET+1 ticks. The clock therefore reads to 5-minute granularity. A
-per-second clock is not a feature we chose to omit; it destroys the panel.
+Every push is a FULL refresh; partial refresh is not used at all. The two rules
+above collide: sleeping powers the controller down, which destroys the old-image
+RAM that a partial refresh diffs against, so a partial after a sleep/init cycle
+leaves the previous frame ghosting through the new one (observed on hardware as
+overlapping digits). Waveshare's own demo only chains partials inside a single
+power-on session. At a >=180 s cadence there is no such session, so partial
+refresh has no role here.
+
+A per-second clock is therefore not a feature we chose to omit; it destroys the
+panel. The displayed minute is exact as of the moment it painted.
 
 This process is the single owner of the panel. `epdconfig` claims GPIO 17/25/18/24
 at *import* time, so a second process importing it fails with GPIOPinInUse. The
@@ -65,8 +71,6 @@ log = logging.getLogger("screenstats.renderer")
 COLLECT_INTERVAL = 10.0
 WEATHER_INTERVAL = 900.0        # 15 min; Open-Meteo's `current` step is 900 s
 GEO_TTL = 86400.0
-PARTIAL_BUDGET = 5              # V4 spec: full refresh after at most 5 partials
-MAX_IDLE = 23 * 3600.0          # force a refresh inside the 24 h ghosting window
 STALE_AFTER = WEATHER_INTERVAL * 2
 
 
@@ -234,7 +238,6 @@ class Panel:
     data_dir: Path | None = None
     tick: int = 0
     last_paint: float = 0.0
-    last_full: float = 0.0
     error: str | None = None
 
     def _publish_preview(self, img: object) -> None:
@@ -263,24 +266,21 @@ class Panel:
         except Exception as exc:                            # never fail a paint over this
             log.warning("preview publish failed: %s", exc)
 
-    def wants_full(self) -> bool:
-        if self.last_full <= 0.0:
-            return True                                  # first paint of the process
-        if self.tick % (PARTIAL_BUDGET + 1) == 0:
-            return True                                  # V4 spec 5-partial budget
-        if (time.time() - self.last_full) > MAX_IDLE:
-            return True                                  # 24 h ghosting window
-        return False
-
     def paint(self, snap: layout.Snapshot) -> None:
-        full = self.wants_full()
+        """Render and push one frame. Always a full refresh -- see display/epd.py.
+
+        There is no partial-refresh path. Sleeping the panel after every refresh
+        (mandatory) powers the controller down and destroys the old-image RAM that
+        a partial refresh diffs against, so a partial after a sleep leaves the
+        previous frame ghosting through the new one.
+        """
         img = layout.render(snap)
         # Publish before pushing: if the panel is broken the web UI should still
         # show what *would* have been drawn, which is what makes the status page
         # useful for diagnosing a hardware fault.
         self._publish_preview(img)
         try:
-            self.display.push(img, full=full)
+            self.display.push(img)
             self.display.sleep()
         except Exception as exc:                          # keep the loop alive
             self.error = f"{type(exc).__name__}: {exc}"
@@ -288,13 +288,8 @@ class Panel:
             return
         self.error = None
         self.last_paint = time.time()
-        if full:
-            self.last_full = self.last_paint
         self.tick += 1
-        log.info(
-            "painted tick=%d %s clock=%s", self.tick,
-            "FULL" if full else "partial", snap.clock,
-        )
+        log.info("painted tick=%d FULL clock=%s", self.tick, snap.clock)
 
     def as_dict(self, next_paint: float) -> dict:
         return {
@@ -302,7 +297,9 @@ class Panel:
             "last_paint": self.last_paint,
             "next_paint": next_paint,
             "tick": self.tick,
-            "last_full": self.last_full,
+            # Every refresh is full, so this is always the last paint. Kept in the
+            # payload so the schema does not change under the web UI.
+            "last_full": self.last_paint,
             "error": self.error,
         }
 
@@ -407,7 +404,6 @@ def main() -> int:
                 log.error("display rebuild failed: %s", exc)
                 panel.display = displaybase.make_display("null", data)
             active_rotate = cfg.rotate
-            panel.last_full = 0.0
             next_paint = 0.0
 
         if cfg.location.mode == "manual" and cfg.location.lat is not None:

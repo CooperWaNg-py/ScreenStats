@@ -12,16 +12,16 @@ Precautions, and the
   power off it. Otherwise, the screen will remain in a high voltage state for a
   long time, which will damage the e-Paper and cannot be repaired!"
   (Precautions #2) -- so ``sleep()`` runs after **every** refresh, no exceptions.
-* "you cannot refresh them with the partial refresh mode all the time. After
-  refreshing partially several times, you need to fully refresh EPD once.
-  Otherwise, the display effect will be abnormal, which cannot be repaired!"
-  (Precautions #1); the V4 specification (p.9) fixes the number: "it is
-  recommended to add a full-screen refresh after 5 consecutive operations".
 * Going over 24 h without any refresh causes "Ghosting" or "Image Sticking"
   (V4 specification 16.5).
 
-The paint loop owns the 180 s interval and the 5-partial cycle. This module is
-the backstop: it refuses to let a caller bug quietly damage the hardware.
+Partial refresh is NOT used. Precautions #1 caps consecutive partials at five,
+but the deciding constraint is simpler: sleeping after every refresh (above)
+powers the controller down, and `displayPartial()` diffs against the old-image
+RAM bank that the sleep destroys. See `push()`.
+
+The paint loop owns the 180 s interval. This module is the backstop: it refuses
+to let a caller bug quietly damage the hardware.
 """
 
 from __future__ import annotations
@@ -46,8 +46,6 @@ FRAME_SIZE = (250, 122)
 #: which would be pushed as a garbage frame. Assert the length every push.
 FRAME_BYTES = 4000
 
-#: V4 specification p.9: full refresh after at most 5 consecutive partials.
-MAX_PARTIALS = 5
 
 
 def _load_driver() -> tuple[Any, Any]:
@@ -116,11 +114,8 @@ class EpdDisplay:
         self._epdconfig = epdconfig
         self._epd = epd2in13_V4.EPD()
 
-        #: Consecutive partial pushes since the last full refresh.
-        self.partials_since_full = 0
         self.pushes = 0
         self.last_push = 0.0
-        self.last_full = 0.0
         self._asleep = True
         self._closed = False
 
@@ -146,30 +141,31 @@ class EpdDisplay:
 
     # ---- Display protocol -------------------------------------------------
 
-    def push(self, img: Image.Image, full: bool) -> None:
-        """Paint one frame, then sleep the panel.
+    def push(self, img: Image.Image) -> None:
+        """Paint one frame as a full refresh, then sleep the panel.
 
-        After ``sleep()`` "the sent image data will be ignored, and it can be
-        refreshed normally only after initializing again", so every push
-        re-``init()``s. That also satisfies the wiki FAQ requirement that a
-        partial -> full transition needs a fresh full-refresh init.
+        The sequence is the vendor's own non-partial one from
+        ``epd_2in13_V4_test.py``: ``init()`` -> ``Clear(0xFF)`` -> ``display()``.
+
+        ``Clear`` before ``display`` is not redundant. Wiki FAQ: "when the EPD
+        wakes up, the screen must be cleared first, to avoid the afterimage
+        phenomenon to the greatest extent." Two full updates cost ~4 s, which is
+        irrelevant at a >=180 s cadence.
+
+        Why there is no partial-refresh path here any more: ``sleep()`` issues
+        deep sleep (0x10/0x01) and ``module_exit()`` drops the PWR pin, so the
+        controller loses its RAM; ``init()`` then issues SWRESET, clearing it
+        again. ``displayPartial()`` diffs the new frame against the old-image RAM
+        bank (0x26), so after a sleep/init cycle it diffs against undefined
+        content and the previous image is never driven out -- it ghosts through,
+        e.g. a "01" and an "11" overlapping. Partial refresh is only valid for
+        successive updates inside one power-on session, which a >=180 s interval
+        with a mandatory sleep can never be.
         """
         if self._closed:
             raise DisplayError("display is closed")
 
         buf = self._buffer(img)
-
-        if not full and self.partials_since_full >= MAX_PARTIALS:
-            # The caller is meant to schedule this. Promote rather than obey:
-            # exceeding the partial run is unrepairable panel damage, and
-            # skipping the paint would leave a stale frame instead.
-            logger.error(
-                "refusing partial refresh #%d without a full refresh "
-                "(Waveshare limit is %d); promoting this push to a full refresh",
-                self.partials_since_full + 1,
-                MAX_PARTIALS,
-            )
-            full = True
 
         if self._epd.init() != 0:
             raise DisplayError(
@@ -179,26 +175,15 @@ class EpdDisplay:
         self._asleep = False
 
         try:
-            if full:
-                self._epd.Clear(0xFF)
-                # Seeds both RAM banks (0x24 and 0x26) so the following
-                # partial refreshes have a correct base image to diff against.
-                self._epd.displayPartBaseImage(buf)
-            else:
-                self._epd.displayPartial(buf)
+            self._epd.Clear(0xFF)
+            self._epd.display(buf)
         finally:
             # Mandatory after every refresh, including a failed one: leaving
             # the panel powered at high voltage is what destroys it.
             self.sleep()
 
-        now = time.time()
         self.pushes += 1
-        self.last_push = now
-        if full:
-            self.partials_since_full = 0
-            self.last_full = now
-        else:
-            self.partials_since_full += 1
+        self.last_push = time.time()
 
     def sleep(self) -> None:
         """Enter deep sleep. Idempotent -- pushes already sleep on their way out.
