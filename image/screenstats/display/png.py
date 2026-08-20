@@ -41,8 +41,7 @@ class PngDisplay:
         self.last_push = 0.0
 
     def push(self, img: Image.Image) -> None:
-        """Publish the frame. `full` is irrelevant to a file: no waveforms here."""
-        del full
+        """Publish the frame. There are no waveforms in a file, so no refresh mode."""
         publish_bytes(self.path, _png_bytes(img))
         big = img.resize(
             (img.width * SCALE, img.height * SCALE), resample=Image.Resampling.NEAREST

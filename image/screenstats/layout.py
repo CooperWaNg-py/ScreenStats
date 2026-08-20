@@ -32,10 +32,16 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
 
+from . import icons
+
 # Landscape frame. Portrait native is (122, 250); getbuffer() rotates for us.
 W, H = 250, 122
 
 BLACK, WHITE = 0, 1
+
+#: Weather glyph edge, px. Zone C row 1 runs y66..89 between two rules, so 22 at
+#: y=67 keeps the precipitation streaks clear of the rule at y=90.
+ICON = 22
 
 # Debian: fonts-dejavu-core (installed in the app image). Local dev on macOS
 # falls back to matplotlib's bundled copy, which is what the harness uses.
@@ -73,10 +79,11 @@ class Snapshot:
     disk: float = 0.31
     city: str = "Melbourne"
     temp_c: float = 10.9
-    feels_c: float = 9.9
     condition: str = "Part cloudy"
     lo_c: float = 4.7
     hi_c: float = 11.3
+    code: int | None = 2          # WMO code -> weather glyph
+    is_day: bool = True           # picks sun vs moon
     stale: str | None = None  # e.g. "14:20" when weather cache is old
 
 
@@ -149,16 +156,20 @@ def _draw_frame(d: ImageDraw.ImageDraw, s: Snapshot, ox: int = 0, oy: int = 0) -
     rule(148, 0, 148, 65)       # separates clock from stats
 
     # ---- Zone C: greeting + weather, y 67..121 ---------------------------
+    # Row 1 is greeting | icon | temperature. The "feels like" reading used to sit
+    # between them, but measurement showed row 1 has only 8 px spare in the worst
+    # case (greeting 129 + feels 47 + temp 50 + margins), so there was no room for
+    # a legible icon alongside it. "feels" is the least informative of the four
+    # weather values -- temp, condition text and today's lo/hi all remain -- and it
+    # is still reported in status.json, the widget and the web UI.
     temp = f"{s.temp_c:.0f}\u00b0"
     tw = text_w(d, temp, f_temp)
     txt(W - 4 - tw, 66, temp, f_temp)
 
-    feels = f"feels {s.feels_c:.0f}\u00b0"
-    fw = text_w(d, feels, f_small)
-    feels_x = W - 8 - tw - fw
-    txt(feels_x, 74, feels, f_small)
+    icon_x = W - 4 - tw - 6 - ICON
+    icons.draw(d, icons.kind_for(s.code, s.is_day), (ox + icon_x, oy + 67, ICON, ICON))
 
-    txt(4, 69, fit(d, s.greeting, f_greet, feels_x - 8), f_greet)
+    txt(4, 69, fit(d, s.greeting, f_greet, icon_x - 8), f_greet)
 
     rule(0, 90, W - 1, 90)
 

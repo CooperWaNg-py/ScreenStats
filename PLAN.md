@@ -119,11 +119,35 @@ nominal: /tmp/p.png ok  frame=4000 B  no clipping
  │  (mono bold 44)            │  │ RAM ▓▓▓▓▓▁  71%           │
  │ Sat 16 Aug                 │  │ DSK ▓▓▁▁▁▁  31%           │
  ├────────────────────────────┴──┴───────────────────────────┤ y66
- │ Good Afternoon           feels 10°              11°       │
+ │ Good Afternoon                          [icon]  11°       │
  ├───────────────────────────────────────────────────────────┤ y90
  │ Melbourne · Part cloudy                      5°/11°       │
  └───────────────────────────────────────────────────────────┘ y121
 ```
+
+#### The weather glyph, and what it cost
+
+`icons.py` draws 12 glyphs from primitives (no bitmap assets to license or keep in
+sync) mapped from the 28 WMO codes, split by `is_day` for sun vs moon. Unknown or
+absent codes fall back to a neutral cloud rather than an empty slot.
+
+Placing it required measuring, not guessing. Row 1 had **8 px** spare in the worst
+case (greeting 129 + `feels` 47 + temp 50 + margins) and row 2 had 22 px — no room
+for a legible 22 px glyph. So the `feels like` reading was dropped from the panel:
+it is the least informative of the four weather values (temperature, condition
+text and today's lo/hi all remain) and it is still reported in `status.json`, the
+widget and the web UI. That leaves 29 px of slack in the worst case.
+
+1-bit design rules that actually mattered: filled silhouettes rather than outlines,
+nothing thinner than 2 px, and few details — three rain streaks read as rain, six
+read as a smudge.
+
+All glyph geometry is expressed as a fraction of the box edge, never in absolute
+pixels, and a test asserts every glyph is fully contained at 16/18/22/26/32/48 px.
+That check earned its keep immediately: it caught sun rays escaping the left edge,
+a fixed ray length that was fine at 22 px and overflowed at 18 px, and fog lines
+spilling one row past the bottom. The off-panel ink detector could not have found
+any of them — the ink was inside the panel, just colliding with the layout rules.
 
 Two real defects were found and fixed by building this harness rather than
 guessing:

@@ -168,10 +168,13 @@ def build_snapshot(
         disk=m.disk,
         city=city,
         temp_c=w.temp if w else 0.0,
-        feels_c=w.feels if w else 0.0,
         condition=w.condition if w else "no data",
         lo_c=w.lo if w else 0.0,
         hi_c=w.hi if w else 0.0,
+        # Drives the weather glyph. With no weather at all, None renders the
+        # neutral cloud rather than implying clear skies.
+        code=w.code if w else None,
+        is_day=w.is_day if w else True,
         stale=stale,
     )
 
